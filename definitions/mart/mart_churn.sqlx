@@ -95,8 +95,8 @@ churn_by_tenure_agg AS (
   SELECT
     DATE_TRUNC(c.churn_date, MONTH) AS churn_month,
     CASE
-      WHEN DATE_DIFF(c.churn_date, cu.registration_date, MONTH) < 6 THEN 'new'
-      WHEN DATE_DIFF(c.churn_date, cu.registration_date, MONTH) < 24 THEN 'established'
+      WHEN DATE_DIFF(c.churn_date, DATE(cu.registration_date), MONTH) < 6 THEN 'new'
+      WHEN DATE_DIFF(c.churn_date, DATE(cu.registration_date), MONTH) < 24 THEN 'established'
       ELSE 'loyal'
     END AS tenure_band,
     COUNT(*) AS n
