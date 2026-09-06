@@ -1,0 +1,21 @@
+config {
+  type: "table",
+  schema: "myconnect_gold",
+  description: "Network event facts with duration and subscriber-impact measures, enabling MTTR (AVG(duration_minutes)) without querying Silver directly. Grain: 1 row per network event."
+}
+
+SELECT
+  event_id,
+  -- event_type and severity are required by mart_service_quality's own spec (Section 10:
+  -- outage_count, incidents_by_severity). Passed through unmodified from int_network_impact;
+  -- no new classification is introduced.
+  event_type,
+  severity,
+  start_time,
+  end_time,
+  affected_subscribers,
+  region,
+  duration_minutes,
+  affected_subscriber_hours
+FROM
+  ${ref("int_network_impact")}

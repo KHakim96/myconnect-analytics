@@ -1,0 +1,39 @@
+config {
+  type: "view",
+  schema: "myconnect_silver",
+  description: "Invoice with aggregated line-item totals and reconciliation mismatch flag. Grain: 1 row per invoice."
+}
+
+WITH line_item_totals AS (
+  SELECT
+    invoice_id,
+    SUM(amount) AS line_item_total,
+    COUNT(*) AS line_item_count
+  FROM
+    ${ref("stg_bill_line_items")}
+  GROUP BY
+    invoice_id
+)
+
+SELECT
+  b.invoice_id,
+  b.subscription_id,
+  b.customer_id,
+  b.billing_period_start,
+  b.billing_period_end,
+  b.invoice_date,
+  b.due_date,
+  b.total_amount,
+  b.tax_amount,
+  b.discount_amount,
+  b.status,
+  b.payment_status_date,
+  COALESCE(li.line_item_total, 0) AS line_item_total,
+  COALESCE(li.line_item_count, 0) AS line_item_count,
+  (b.total_amount - COALESCE(li.line_item_total, 0)) AS reconciliation_difference,
+  (ABS(b.total_amount - COALESCE(li.line_item_total, 0)) > 0.01) AS is_reconciliation_mismatch
+FROM
+  ${ref("stg_billing")} b
+LEFT JOIN
+  line_item_totals li
+  ON b.invoice_id = li.invoice_id

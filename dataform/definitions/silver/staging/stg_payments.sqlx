@@ -1,0 +1,45 @@
+config {
+  type: "view",
+  schema: "myconnect_silver",
+  description: "Clean payments with deduplicated retry attempts keeping the first occurrence, standardized payment methods, and flagged orphan invoices."
+}
+
+WITH deduplicated_payments AS (
+  SELECT
+    payment_id,
+    invoice_id,
+    customer_id,
+    payment_date,
+    payment_amount,
+    LOWER(TRIM(payment_method)) AS payment_method,
+    LOWER(TRIM(payment_status)) AS payment_status,
+    reference_number,
+    TIMESTAMP_MICROS(DIV(created_at, 1000)) AS created_at,
+    created_at AS raw_created_at,
+    ROW_NUMBER() OVER (
+      PARTITION BY invoice_id, payment_date, payment_amount
+      ORDER BY created_at ASC, payment_id ASC
+    ) AS row_num
+  FROM
+    ${ref("payments")}
+)
+
+SELECT
+  p.payment_id,
+  p.invoice_id,
+  p.customer_id,
+  p.payment_date,
+  p.payment_amount,
+  p.payment_method,
+  p.payment_status,
+  p.reference_number,
+  p.created_at,
+  (b.invoice_id IS NULL) AS is_orphan_payment
+FROM
+  deduplicated_payments p
+LEFT JOIN
+  ${ref("stg_billing")} b
+  ON p.invoice_id = b.invoice_id
+WHERE
+  p.row_num = 1
+

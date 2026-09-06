@@ -1,0 +1,21 @@
+config {
+  type: "table",
+  schema: "myconnect_gold",
+  description: "Churn event facts with contract and retention outcomes. Grain: 1 row per churn event."
+}
+
+SELECT
+  c.churn_event_id,
+  c.customer_id,
+  c.subscription_id,
+  c.churn_date,
+  c.churn_type,
+  -- churn_reason preserved as-is from Silver, including the unimputed NULL involuntary-churn
+  -- reasons; Silver does not impute a 'non_payment' value, so none is fabricated here either.
+  c.churn_reason,
+  c.contract_remaining_months AS contract_remaining,
+  c.early_termination_fee AS etf_amount,
+  c.retention_attempted,
+  c.retention_accepted AS retention_success
+FROM
+  ${ref("stg_churn_events")} c

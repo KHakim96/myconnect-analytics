@@ -1,0 +1,61 @@
+config {
+  type: "table",
+  schema: "myconnect_mart",
+  description: "Customer 360 view. Grain: 1 row per customer. churn_risk_flags is a specification gap (no scoring rule defined anywhere) and is left NULL rather than fabricated. CLTV and tenure inherit the already-disclosed ARPU-denominator and CURRENT_DATE()-tenure caveats."
+}
+
+WITH customer_revenue AS (
+  SELECT
+    customer_id,
+    SUM(total_amount) AS total_revenue,
+    COUNT(DISTINCT DATE_TRUNC(invoice_date, MONTH)) AS billed_months
+  FROM
+    ${ref("fct_billing")}
+  GROUP BY
+    customer_id
+),
+
+customer_tickets AS (
+  SELECT
+    customer_id,
+    COUNT(*) AS total_tickets
+  FROM
+    ${ref("fct_support_tickets")}
+  WHERE
+    customer_id IS NOT NULL
+  GROUP BY
+    customer_id
+),
+
+current_arpu AS (
+  -- Single current-snapshot ARPU (not a monthly series) for CLTV, using the same
+  -- active-subscription definition as mart_revenue.
+  SELECT
+    SAFE_DIVIDE(SUM(monthly_charge), COUNT(DISTINCT subscription_id)) AS current_arpu
+  FROM
+    ${ref("dim_subscriptions")}
+  WHERE
+    is_active
+)
+
+SELECT
+  c.customer_id,
+  c.tenure_months AS tenure,
+  ROUND(a.current_arpu * c.tenure_months, 2) AS cltv,
+  COALESCE(cr.total_revenue, 0) AS total_revenue,
+  SAFE_DIVIDE(cr.total_revenue, NULLIF(cr.billed_months, 0)) AS avg_monthly_spend,
+  COALESCE(ct.total_tickets, 0) AS total_tickets,
+  CAST(NULL AS BOOL) AS churn_risk_flags,
+  c.current_plan_name AS plan,
+  c.dwelling_type AS dwelling,
+  g.region
+FROM
+  ${ref("dim_customers")} c
+LEFT JOIN
+  customer_revenue cr ON c.customer_id = cr.customer_id
+LEFT JOIN
+  customer_tickets ct ON c.customer_id = ct.customer_id
+LEFT JOIN
+  ${ref("dim_geography")} g ON c.state = g.state AND c.city = g.city
+CROSS JOIN
+  current_arpu a

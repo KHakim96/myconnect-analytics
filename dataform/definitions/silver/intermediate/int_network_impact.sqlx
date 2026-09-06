@@ -1,0 +1,33 @@
+config {
+  type: "view",
+  schema: "myconnect_silver",
+  description: "Network event with calculated duration and affected subscriber-hours. Grain: 1 row per event."
+}
+
+SELECT
+  event_id,
+  node_id,
+  event_type,
+  severity,
+  start_time,
+  end_time,
+  affected_subscribers,
+  region,
+  state,
+  root_cause,
+  CASE
+    WHEN end_time IS NOT NULL
+    THEN TIMESTAMP_DIFF(end_time, start_time, MINUTE)
+    ELSE NULL
+  END AS duration_minutes,
+  CASE
+    WHEN end_time IS NOT NULL
+    THEN ROUND(
+      CAST(affected_subscribers AS FLOAT64)
+      * (TIMESTAMP_DIFF(end_time, start_time, MINUTE) / 60.0),
+      2
+    )
+    ELSE NULL
+  END AS affected_subscriber_hours
+FROM
+  ${ref("stg_network_events")}

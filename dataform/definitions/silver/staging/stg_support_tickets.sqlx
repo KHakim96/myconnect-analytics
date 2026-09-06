@@ -1,0 +1,50 @@
+config {
+  type: "view",
+  schema: "myconnect_silver",
+  description: "Clean support tickets with normalized categories, priorities, statuses, and resolved chronological date inversions."
+}
+
+WITH converted_tickets AS (
+  SELECT
+    ticket_id,
+    customer_id,
+    subscription_id,
+    TIMESTAMP_MICROS(DIV(created_date, 1000)) AS created_date,
+    TIMESTAMP_MICROS(DIV(resolved_date, 1000)) AS resolved_date,
+    LOWER(TRIM(category)) AS category,
+    subcategory,
+    LOWER(TRIM(priority)) AS priority,
+    LOWER(TRIM(status)) AS status,
+    channel,
+    assigned_agent,
+    resolution_notes,
+    satisfaction_score,
+    TIMESTAMP_MICROS(DIV(created_at, 1000)) AS created_at
+  FROM
+    ${ref("support_tickets")}
+)
+
+SELECT
+  ticket_id,
+  customer_id,
+  subscription_id,
+  CASE
+    WHEN resolved_date IS NOT NULL AND resolved_date < created_date THEN resolved_date
+    ELSE created_date
+  END AS created_date,
+  CASE
+    WHEN resolved_date IS NOT NULL AND resolved_date < created_date THEN created_date
+    ELSE resolved_date
+  END AS resolved_date,
+  category,
+  subcategory,
+  priority,
+  status,
+  channel,
+  assigned_agent,
+  resolution_notes,
+  satisfaction_score,
+  created_at
+FROM
+  converted_tickets
+

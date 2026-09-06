@@ -1,0 +1,57 @@
+config {
+  type: "incremental",
+  schema: "myconnect_gold",
+  uniqueKey: ["invoice_id"],
+  description: "Billing facts with line-item reconciliation, overdue flag, and days-to-payment. Grain: 1 row per invoice."
+}
+
+WITH first_successful_payment AS (
+  SELECT
+    invoice_id,
+    MIN(payment_date) AS first_successful_payment_date
+  FROM
+    ${ref("stg_payments")}
+  WHERE
+    payment_status = 'success'
+    AND NOT is_orphan_payment
+  GROUP BY
+    invoice_id
+)
+
+SELECT
+  r.invoice_id,
+  r.subscription_id,
+  r.customer_id,
+  r.invoice_date,
+  r.due_date,
+  r.total_amount,
+  r.tax_amount,
+  r.discount_amount,
+  r.line_item_total,
+  r.is_reconciliation_mismatch AS reconciliation_flag,
+  -- is_overdue uses the existing Silver `status` categorical value (spec Section 7.4:
+  -- paid/unpaid/overdue/void); no invented date-based overdue rule is applied.
+  (r.status = 'overdue') AS is_overdue,
+  -- days_to_payment uses the earliest successful, non-orphan payment date already present in
+  -- stg_payments; NULL when an invoice has no successful payment yet.
+  DATE_DIFF(fp.first_successful_payment_date, r.invoice_date, DAY) AS days_to_payment,
+  -- Invoice-level payment reconciliation, reused verbatim from int_payment_reconciliation
+  -- (already 1 row per invoice via stg_billing's own dedup, so this join cannot fan out).
+  -- Required so mart_revenue_assurance can compute overpayments/underpayments from Gold
+  -- alone; orphan payments are intentionally NOT re-exposed here to avoid double-counting
+  -- them against fct_payments.is_orphan_payment, which already covers that independently.
+  pr.total_paid,
+  pr.payment_reconciliation_status,
+  b.created_at
+FROM
+  ${ref("int_billing_reconciliation")} r
+LEFT JOIN
+  ${ref("stg_billing")} b
+  ON r.invoice_id = b.invoice_id
+LEFT JOIN
+  first_successful_payment fp
+  ON r.invoice_id = fp.invoice_id
+LEFT JOIN
+  ${ref("int_payment_reconciliation")} pr
+  ON r.invoice_id = pr.invoice_id
+${when(incremental(), `WHERE b.created_at > (SELECT MAX(created_at) FROM ${self()})`)}

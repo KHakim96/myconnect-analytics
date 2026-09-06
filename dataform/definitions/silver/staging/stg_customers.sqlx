@@ -1,0 +1,73 @@
+config {
+  type: "view",
+  schema: "myconnect_silver",
+  description: "Clean customer master with deduplicated IC numbers, standardized locations and statuses, validated contact details, and capped future registration dates."
+}
+
+WITH cleaned_customers AS (
+  SELECT
+    CAST(customer_id AS STRING) AS customer_id,
+    CAST(first_name AS STRING) AS first_name,
+    CAST(last_name AS STRING) AS last_name,
+    CASE
+      WHEN REGEXP_CONTAINS(email, r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$') THEN email
+      ELSE NULL
+    END AS email,
+    (email IS NOT NULL AND REGEXP_CONTAINS(email, r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$')) AS is_valid_email,
+    CASE
+      WHEN REGEXP_CONTAINS(phone_number, r'^\+?6?01[0-9]{8,9}$') THEN phone_number
+      ELSE NULL
+    END AS phone_number,
+    CAST(ic_number AS STRING) AS ic_number,
+    CAST(customer_type AS STRING) AS customer_type,
+    CASE
+      WHEN DATE(TIMESTAMP_MICROS(DIV(registration_date, 1000))) > CURRENT_DATE() THEN TIMESTAMP(CURRENT_DATE())
+      ELSE TIMESTAMP_MICROS(DIV(registration_date, 1000))
+    END AS registration_date,
+    LOWER(TRIM(CAST(status AS STRING))) AS status,
+    CAST(address_line_1 AS STRING) AS address_line_1,
+    CAST(address_line_2 AS STRING) AS address_line_2,
+    CASE
+      WHEN TRIM(city) = 'PJ' THEN 'Petaling Jaya'
+      WHEN TRIM(city) = 'KL' THEN 'Kuala Lumpur'
+      ELSE TRIM(city)
+    END AS city,
+    TRIM(CAST(state AS STRING)) AS state,
+    CAST(postcode AS STRING) AS postcode,
+    CAST(dwelling_type AS STRING) AS dwelling_type,
+    CAST(referral_code AS STRING) AS referral_code,
+    TIMESTAMP_MICROS(DIV(created_at, 1000)) AS created_at,
+    TIMESTAMP_MICROS(DIV(updated_at, 1000)) AS updated_at,
+    ROW_NUMBER() OVER (
+      PARTITION BY ic_number
+      ORDER BY updated_at DESC, registration_date DESC, customer_id DESC
+    ) AS row_num
+  FROM
+    ${ref("customers")}
+)
+
+SELECT
+  customer_id,
+  first_name,
+  last_name,
+  email,
+  is_valid_email,
+  phone_number,
+  ic_number,
+  customer_type,
+  registration_date,
+  status,
+  address_line_1,
+  address_line_2,
+  city,
+  state,
+  postcode,
+  dwelling_type,
+  referral_code,
+  created_at,
+  updated_at
+FROM
+  cleaned_customers
+WHERE
+  row_num = 1
+

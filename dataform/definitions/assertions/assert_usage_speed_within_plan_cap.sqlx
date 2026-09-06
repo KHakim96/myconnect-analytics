@@ -1,0 +1,26 @@
+config {
+  type: "assertion",
+  description: "stg_usage_daily peak/avg download speed must never exceed the subscription's plan speed x 1.5 (spec Section 7.7). Regression guard for the B4 fix, which previously used a flat 2,000 Mbps cap instead of this plan-relative rule. Rows whose plan speed cannot be resolved are excluded, not treated as a new rule."
+}
+
+SELECT
+  u.usage_id,
+  u.subscription_id,
+  u.usage_date,
+  u.peak_download_mbps,
+  u.avg_download_mbps,
+  p.speed_mbps AS plan_speed_mbps
+FROM
+  ${ref("stg_usage_daily")} u
+LEFT JOIN
+  ${ref("stg_subscriptions")} s
+  ON u.subscription_id = s.subscription_id
+LEFT JOIN
+  ${ref("stg_plans")} p
+  ON s.plan_id = p.plan_id
+WHERE
+  p.speed_mbps IS NOT NULL
+  AND (
+    u.peak_download_mbps > p.speed_mbps * 1.5
+    OR u.avg_download_mbps > p.speed_mbps * 1.5
+  )

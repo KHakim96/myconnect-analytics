@@ -1,0 +1,30 @@
+config {
+  type: "table",
+  schema: "myconnect_gold",
+  description: "Customer dimension enriched with tenure and lifecycle stage. Grain: 1 row per customer."
+}
+
+SELECT
+  ics.customer_id,
+  CONCAT(ics.first_name, ' ', ics.last_name) AS name,
+  ics.customer_type AS type,
+  ics.dwelling_type,
+  ics.state,
+  ics.city,
+  ics.registration_date,
+  ict.tenure_months,
+  ict.lifecycle_stage,
+  -- Reuses int_customer_subscriptions' existing deterministic ranking, which already
+  -- prioritizes an active subscription over any other status for the same customer.
+  (ics.subscription_status = 'active') AS has_active_subscription,
+  -- Current/latest plan, reusing int_customer_subscriptions' already-computed ranking
+  -- (no new join or logic): prioritizes an active subscription if one exists, otherwise the
+  -- most recent by start date. NULL for the customers who have never had a subscription.
+  ics.current_subscription_id,
+  ics.current_plan_id,
+  ics.current_plan_name
+FROM
+  ${ref("int_customer_subscriptions")} ics
+LEFT JOIN
+  ${ref("int_customer_tenure")} ict
+  ON ics.customer_id = ict.customer_id

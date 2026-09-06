@@ -1,0 +1,69 @@
+config {
+  type: "table",
+  schema: "myconnect_mart",
+  description: "Support analytics. Grain: 1 row per month. sla_compliance_pct is unsupported (fct_support_tickets.sla_met is NULL for every ticket: no SLA threshold or first-response timestamp is defined anywhere) and correctly evaluates to NULL rather than being fabricated. resolution_rate is a specification gap (no locked formula exists for it anywhere in the spec) and is left NULL rather than guessing which statuses/timeframe count as 'resolved'."
+}
+
+WITH tickets AS (
+  SELECT
+    DATE_TRUNC(DATE(created_date), MONTH) AS ticket_month,
+    category,
+    status,
+    resolution_hours,
+    satisfaction_score,
+    sla_met
+  FROM
+    ${ref("fct_support_tickets")}
+),
+
+monthly_agg AS (
+  SELECT
+    ticket_month,
+    COUNT(*) AS total_tickets,
+    ROUND(AVG(resolution_hours), 2) AS avg_resolution_hours,
+    -- sla_met is NULL for every row (no SLA threshold defined anywhere); AVG() over an
+    -- all-NULL column correctly yields NULL rather than a fabricated percentage.
+    ROUND(100 * AVG(CAST(sla_met AS INT64)), 2) AS sla_compliance_pct,
+    ROUND(AVG(satisfaction_score), 2) AS csat_avg
+  FROM
+    tickets
+  GROUP BY
+    ticket_month
+),
+
+category_counts AS (
+  SELECT
+    ticket_month,
+    category,
+    COUNT(*) AS n
+  FROM
+    tickets
+  GROUP BY
+    ticket_month,
+    category
+),
+
+category_breakdown AS (
+  SELECT
+    ticket_month,
+    ARRAY_AGG(STRUCT(category, n) ORDER BY n DESC) AS tickets_by_category
+  FROM
+    category_counts
+  GROUP BY
+    ticket_month
+)
+
+SELECT
+  m.ticket_month,
+  m.total_tickets,
+  -- resolution_rate: specification gap. No locked definition exists for which statuses
+  -- (resolved only? closed too? within what timeframe?) count toward this rate.
+  CAST(NULL AS FLOAT64) AS resolution_rate,
+  m.avg_resolution_hours,
+  m.sla_compliance_pct,
+  m.csat_avg,
+  cb.tickets_by_category
+FROM
+  monthly_agg m
+LEFT JOIN
+  category_breakdown cb ON m.ticket_month = cb.ticket_month

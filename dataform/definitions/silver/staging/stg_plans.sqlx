@@ -1,0 +1,21 @@
+config {
+  type: "view",
+  schema: "myconnect_silver",
+  description: "Clean product catalog with standardized plan categories and typed attributes."
+}
+
+SELECT
+  CAST(plan_id AS STRING) AS plan_id,
+  CAST(plan_name AS STRING) AS plan_name,
+  CAST(speed_mbps AS INT64) AS speed_mbps,
+  CAST(upload_speed_mbps AS INT64) AS upload_speed_mbps,
+  CAST(monthly_price AS NUMERIC) AS monthly_price,
+  LOWER(TRIM(CAST(plan_category AS STRING))) AS plan_category,
+  CAST(is_active AS BOOL) AS is_active,
+  CAST(launch_date AS DATE) AS launch_date,
+  CAST(sunset_date AS DATE) AS sunset_date,
+  CAST(data_cap_gb AS INT64) AS data_cap_gb,
+  CAST(includes_router AS BOOL) AS includes_router,
+  CAST(includes_mesh AS INT64) AS includes_mesh
+FROM
+  ${ref("plans")}

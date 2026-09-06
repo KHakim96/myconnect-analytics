@@ -1,0 +1,76 @@
+config {
+  type: "view",
+  schema: "myconnect_silver",
+  description: "Clean billing records with resolved billing period date inversions, filtered zero-dollar non-void invoices, and deduplicated subscription billing periods keeping the first occurrence."
+}
+
+WITH corrected_invoices AS (
+  SELECT
+    invoice_id,
+    subscription_id,
+    customer_id,
+    CASE
+      WHEN billing_period_start > billing_period_end THEN billing_period_end
+      ELSE billing_period_start
+    END AS billing_period_start,
+    CASE
+      WHEN billing_period_start > billing_period_end THEN billing_period_start
+      ELSE billing_period_end
+    END AS billing_period_end,
+    invoice_date,
+    due_date,
+    total_amount,
+    tax_amount,
+    discount_amount,
+    LOWER(TRIM(status)) AS status,
+    payment_status_date,
+    TIMESTAMP_MICROS(DIV(created_at, 1000)) AS created_at,
+    created_at AS raw_created_at
+  FROM
+    ${ref("billing")}
+  WHERE
+    NOT (total_amount = 0 AND LOWER(TRIM(status)) != 'void')
+),
+
+deduplicated_invoices AS (
+  SELECT
+    invoice_id,
+    subscription_id,
+    customer_id,
+    billing_period_start,
+    billing_period_end,
+    invoice_date,
+    due_date,
+    total_amount,
+    tax_amount,
+    discount_amount,
+    status,
+    payment_status_date,
+    created_at,
+    ROW_NUMBER() OVER (
+      PARTITION BY subscription_id, billing_period_start
+      ORDER BY raw_created_at ASC, invoice_id ASC
+    ) AS row_num
+  FROM
+    corrected_invoices
+)
+
+SELECT
+  invoice_id,
+  subscription_id,
+  customer_id,
+  billing_period_start,
+  billing_period_end,
+  invoice_date,
+  due_date,
+  total_amount,
+  tax_amount,
+  discount_amount,
+  status,
+  payment_status_date,
+  created_at
+FROM
+  deduplicated_invoices
+WHERE
+  row_num = 1
+

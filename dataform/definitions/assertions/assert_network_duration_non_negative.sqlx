@@ -1,0 +1,14 @@
+config {
+  type: "assertion",
+  description: "fct_network_events.duration_minutes must never be negative; a negative value would silently corrupt the MTTR KPI (AVG(duration_minutes))."
+}
+
+SELECT
+  event_id,
+  start_time,
+  end_time,
+  duration_minutes
+FROM
+  ${ref("fct_network_events")}
+WHERE
+  duration_minutes < 0

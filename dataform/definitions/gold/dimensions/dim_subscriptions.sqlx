@@ -1,0 +1,24 @@
+config {
+  type: "table",
+  schema: "myconnect_gold",
+  description: "Subscription dimension with plan attributes. Grain: 1 row per subscription."
+}
+
+SELECT
+  s.subscription_id,
+  s.customer_id,
+  s.plan_id,
+  p.plan_name,
+  -- speed_tier: the specification requires this attribute but defines no numeric speed-tier
+  -- bucket boundaries anywhere (Sections 7, 10, or 14). No threshold is invented; left NULL.
+  CAST(NULL AS STRING) AS speed_tier,
+  s.monthly_recurring_charge AS monthly_charge,
+  s.contract_months,
+  s.subscription_start_date AS start_date,
+  s.subscription_end_date AS end_date,
+  (s.status = 'active') AS is_active
+FROM
+  ${ref("stg_subscriptions")} s
+LEFT JOIN
+  ${ref("stg_plans")} p
+  ON s.plan_id = p.plan_id

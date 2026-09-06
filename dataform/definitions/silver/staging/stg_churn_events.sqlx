@@ -1,0 +1,26 @@
+config {
+  type: "view",
+  schema: "myconnect_silver",
+  description: "Clean churn records with standardized churn reasons, converted timestamps, and subscription-status validation retaining active subscription records."
+}
+
+SELECT
+  c.churn_event_id,
+  c.customer_id,
+  c.subscription_id,
+  c.churn_date,
+  c.churn_type,
+  LOWER(TRIM(c.churn_reason)) AS churn_reason,
+  c.contract_remaining_months,
+  c.early_termination_fee,
+  c.retention_attempted,
+  c.retention_offer,
+  c.retention_accepted,
+  TIMESTAMP_MICROS(DIV(c.created_at, 1000)) AS created_at,
+  (LOWER(TRIM(s.status)) = 'terminated') AS is_subscription_terminated
+FROM
+  ${ref("churn_events")} c
+LEFT JOIN
+  ${ref("subscriptions")} s
+  ON c.subscription_id = s.subscription_id
+

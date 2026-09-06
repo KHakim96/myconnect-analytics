@@ -1,0 +1,68 @@
+config {
+  type: "view",
+  schema: "myconnect_silver",
+  description: "Monthly revenue per customer aggregated from billing and active subscription MRR. Grain: 1 row per customer per month."
+}
+
+WITH monthly_billing AS (
+  SELECT
+    customer_id,
+    DATE_TRUNC(billing_period_start, MONTH) AS revenue_month,
+    COUNT(DISTINCT invoice_id) AS invoice_count,
+    SUM(total_amount) AS total_billed,
+    SUM(tax_amount) AS total_tax,
+    SUM(discount_amount) AS total_discount,
+    SUM(total_amount - tax_amount + discount_amount) AS net_revenue
+  FROM
+    ${ref("stg_billing")}
+  GROUP BY
+    customer_id,
+    DATE_TRUNC(billing_period_start, MONTH)
+),
+
+customer_months AS (
+  SELECT DISTINCT
+    customer_id,
+    revenue_month
+  FROM
+    monthly_billing
+),
+
+monthly_active_subscriptions AS (
+  SELECT
+    cm.customer_id,
+    cm.revenue_month,
+    COUNT(DISTINCT s.subscription_id) AS active_subscription_count,
+    SUM(s.monthly_recurring_charge) AS mrr_contribution
+  FROM
+    customer_months cm
+  LEFT JOIN
+    ${ref("stg_subscriptions")} s
+    ON cm.customer_id = s.customer_id
+    AND s.status = 'active'
+    AND s.subscription_start_date <= LAST_DAY(cm.revenue_month)
+    AND (
+      s.subscription_end_date IS NULL
+      OR s.subscription_end_date >= cm.revenue_month
+    )
+  GROUP BY
+    cm.customer_id,
+    cm.revenue_month
+)
+
+SELECT
+  b.customer_id,
+  b.revenue_month,
+  b.invoice_count,
+  b.total_billed,
+  b.total_tax,
+  b.total_discount,
+  b.net_revenue,
+  COALESCE(a.active_subscription_count, 0) AS active_subscription_count,
+  COALESCE(a.mrr_contribution, 0) AS mrr_contribution
+FROM
+  monthly_billing b
+LEFT JOIN
+  monthly_active_subscriptions a
+  ON b.customer_id = a.customer_id
+  AND b.revenue_month = a.revenue_month

@@ -1,0 +1,6 @@
+config {
+  type: "declaration",
+  database: "myconnect-analytics",
+  schema: "myconnect_bronze",
+  name: "churn_events"
+}

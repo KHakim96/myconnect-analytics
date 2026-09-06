@@ -1,0 +1,23 @@
+config {
+  type: "table",
+  schema: "myconnect_gold",
+  description: "Calendar date dimension covering the project's synthetic data window (2024-01-01 to 2025-06-30, per spec Section 6.2 and the repository's DATA_START_DATE/DATA_END_DATE). Grain: 1 row per calendar day. No Malaysian public-holiday source or fiscal-year start month is defined anywhere in the specification or repository, so is_holiday_my and fiscal_quarter are left NULL rather than fabricated."
+}
+
+SELECT
+  d AS date_key,
+  EXTRACT(DAY FROM d) AS day,
+  EXTRACT(MONTH FROM d) AS month,
+  EXTRACT(QUARTER FROM d) AS quarter,
+  EXTRACT(YEAR FROM d) AS year,
+  FORMAT_DATE('%A', d) AS day_of_week,
+  (EXTRACT(DAYOFWEEK FROM d) IN (1, 7)) AS is_weekend,
+  -- No Malaysian public-holiday source/seed exists anywhere in the repository or specification.
+  -- Left NULL rather than fabricating a holiday calendar.
+  CAST(NULL AS BOOL) AS is_holiday_my,
+  FORMAT_DATE('%B', d) AS month_name,
+  -- No fiscal-year start month is defined anywhere in the specification. Left NULL rather than
+  -- assuming a fiscal calendar (e.g. fiscal year = calendar year).
+  CAST(NULL AS INT64) AS fiscal_quarter
+FROM
+  UNNEST(GENERATE_DATE_ARRAY(DATE('2024-01-01'), DATE('2025-06-30'))) AS d

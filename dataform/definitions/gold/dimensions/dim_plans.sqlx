@@ -1,0 +1,18 @@
+config {
+  type: "table",
+  schema: "myconnect_gold",
+  description: "Plan/product dimension. Grain: 1 row per plan."
+}
+
+SELECT
+  plan_id,
+  plan_name,
+  speed_mbps,
+  monthly_price,
+  plan_category AS category,
+  -- speed_tier: no bucket-boundary rule is defined anywhere in the specification; left NULL
+  -- rather than inventing thresholds.
+  CAST(NULL AS STRING) AS speed_tier,
+  is_active AS is_current
+FROM
+  ${ref("stg_plans")}

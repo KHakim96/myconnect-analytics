@@ -1,0 +1,17 @@
+config {
+  type: "view",
+  schema: "myconnect_silver",
+  description: "Clean invoice line items with standardized charge types, imputed unclassified charge types, and converted timestamp types."
+}
+
+SELECT
+  line_item_id,
+  invoice_id,
+  COALESCE(LOWER(TRIM(charge_type)), 'unclassified') AS charge_type,
+  description,
+  amount,
+  quantity,
+  TIMESTAMP_MICROS(DIV(created_at, 1000)) AS created_at
+FROM
+  ${ref("bill_line_items")}
+

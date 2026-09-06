@@ -1,0 +1,73 @@
+config {
+  type: "view",
+  schema: "myconnect_silver",
+  description: "Customer with latest subscription info: current plan, tenure, contract status. Grain: 1 row per customer."
+}
+
+WITH ranked_subscriptions AS (
+  SELECT
+    s.subscription_id,
+    s.customer_id,
+    s.plan_id,
+    s.subscription_start_date,
+    s.subscription_end_date,
+    s.contract_months,
+    s.status AS subscription_status,
+    s.monthly_recurring_charge,
+    s.is_mrc_matching_plan,
+    s.is_mrc_valid,
+    s.installation_date,
+    s.termination_reason,
+    s.promo_id,
+    s.is_overlapping_active,
+    ROW_NUMBER() OVER (
+      PARTITION BY s.customer_id
+      ORDER BY
+        CASE WHEN s.status = 'active' THEN 0 ELSE 1 END,
+        s.subscription_start_date DESC,
+        s.subscription_id DESC
+    ) AS row_num
+  FROM
+    ${ref("stg_subscriptions")} s
+)
+
+SELECT
+  c.customer_id,
+  c.first_name,
+  c.last_name,
+  c.email,
+  c.is_valid_email,
+  c.phone_number,
+  c.ic_number,
+  c.customer_type,
+  c.registration_date,
+  c.status AS customer_status,
+  c.city,
+  c.state,
+  c.postcode,
+  c.dwelling_type,
+  rs.subscription_id AS current_subscription_id,
+  rs.plan_id AS current_plan_id,
+  p.plan_name AS current_plan_name,
+  p.speed_mbps AS current_plan_speed_mbps,
+  p.plan_category AS current_plan_category,
+  rs.subscription_status,
+  rs.subscription_start_date,
+  rs.subscription_end_date,
+  rs.contract_months,
+  rs.monthly_recurring_charge,
+  rs.is_mrc_matching_plan,
+  rs.is_mrc_valid,
+  rs.promo_id,
+  rs.termination_reason,
+  rs.is_overlapping_active,
+  DATE_DIFF(CURRENT_DATE(), rs.subscription_start_date, MONTH) AS subscription_tenure_months
+FROM
+  ${ref("stg_customers")} c
+LEFT JOIN
+  ranked_subscriptions rs
+  ON c.customer_id = rs.customer_id
+  AND rs.row_num = 1
+LEFT JOIN
+  ${ref("stg_plans")} p
+  ON rs.plan_id = p.plan_id

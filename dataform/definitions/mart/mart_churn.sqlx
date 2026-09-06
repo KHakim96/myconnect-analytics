@@ -1,0 +1,144 @@
+config {
+  type: "table",
+  schema: "myconnect_mart",
+  description: "Churn analytics. Declared spec grain is 1 row per month + segment; no segment field or crosswalk is defined anywhere in the spec or Gold, so `segment` is included as a NULL placeholder column and actual grain is 1 row per month. net_churn_rate is a specification gap (no formula is defined anywhere, unlike gross/voluntary/involuntary churn) and is left NULL. churn_by_tenure_band reuses int_customer_tenure's existing (spec-undefined) band cutoffs for consistency, applied to tenure-at-churn rather than today's tenure."
+}
+
+WITH months AS (
+  SELECT DISTINCT
+    DATE_TRUNC(date_key, MONTH) AS churn_month
+  FROM
+    ${ref("dim_date")}
+),
+
+active_at_start AS (
+  -- Point-in-time active-customer count at the START of each month, from dim_subscriptions'
+  -- date ranges (not is_active, which is a current-day snapshot).
+  SELECT
+    m.churn_month,
+    COUNT(DISTINCT s.customer_id) AS active_customers_at_start
+  FROM
+    months m
+  LEFT JOIN
+    ${ref("dim_subscriptions")} s
+    ON s.start_date <= m.churn_month
+    AND (s.end_date IS NULL OR s.end_date >= m.churn_month)
+  GROUP BY
+    m.churn_month
+),
+
+churn_counts AS (
+  SELECT
+    DATE_TRUNC(churn_date, MONTH) AS churn_month,
+    COUNT(*) AS churned_customers,
+    COUNTIF(churn_type = 'voluntary') AS voluntary_churns,
+    COUNTIF(churn_type = 'involuntary') AS involuntary_churns,
+    COUNTIF(retention_attempted) AS retention_attempted_count,
+    COUNTIF(retention_success) AS retention_success_count
+  FROM
+    ${ref("fct_churn_events")}
+  GROUP BY
+    churn_month
+),
+
+churn_by_reason_agg AS (
+  SELECT
+    DATE_TRUNC(churn_date, MONTH) AS churn_month,
+    churn_reason,
+    COUNT(*) AS n
+  FROM
+    ${ref("fct_churn_events")}
+  GROUP BY
+    churn_month,
+    churn_reason
+),
+
+churn_by_reason AS (
+  SELECT
+    churn_month,
+    ARRAY_AGG(STRUCT(churn_reason, n) ORDER BY n DESC) AS churn_by_reason
+  FROM
+    churn_by_reason_agg
+  GROUP BY
+    churn_month
+),
+
+churn_by_plan_agg AS (
+  SELECT
+    DATE_TRUNC(c.churn_date, MONTH) AS churn_month,
+    COALESCE(p.plan_name, 'Unknown') AS plan_name,
+    COUNT(*) AS n
+  FROM
+    ${ref("fct_churn_events")} c
+  LEFT JOIN
+    ${ref("dim_subscriptions")} s ON c.subscription_id = s.subscription_id
+  LEFT JOIN
+    ${ref("dim_plans")} p ON s.plan_id = p.plan_id
+  GROUP BY
+    churn_month,
+    plan_name
+),
+
+churn_by_plan AS (
+  SELECT
+    churn_month,
+    ARRAY_AGG(STRUCT(plan_name, n) ORDER BY n DESC) AS churn_by_plan
+  FROM
+    churn_by_plan_agg
+  GROUP BY
+    churn_month
+),
+
+churn_by_tenure_agg AS (
+  -- Tenure-at-churn = churn_date - registration_date, NOT dim_customers.tenure_months
+  -- (which is CURRENT_DATE()-relative and would overstate tenure for any churned customer).
+  SELECT
+    DATE_TRUNC(c.churn_date, MONTH) AS churn_month,
+    CASE
+      WHEN DATE_DIFF(c.churn_date, cu.registration_date, MONTH) < 6 THEN 'new'
+      WHEN DATE_DIFF(c.churn_date, cu.registration_date, MONTH) < 24 THEN 'established'
+      ELSE 'loyal'
+    END AS tenure_band,
+    COUNT(*) AS n
+  FROM
+    ${ref("fct_churn_events")} c
+  LEFT JOIN
+    ${ref("dim_customers")} cu ON c.customer_id = cu.customer_id
+  GROUP BY
+    churn_month,
+    tenure_band
+),
+
+churn_by_tenure_band AS (
+  SELECT
+    churn_month,
+    ARRAY_AGG(STRUCT(tenure_band, n) ORDER BY tenure_band) AS churn_by_tenure_band
+  FROM
+    churn_by_tenure_agg
+  GROUP BY
+    churn_month
+)
+
+SELECT
+  m.churn_month,
+  CAST(NULL AS STRING) AS segment,
+  ROUND(100 * SAFE_DIVIDE(cc.churned_customers, a.active_customers_at_start), 2) AS gross_churn_rate,
+  ROUND(100 * SAFE_DIVIDE(cc.voluntary_churns, a.active_customers_at_start), 2) AS voluntary_churn_rate,
+  ROUND(100 * SAFE_DIVIDE(cc.involuntary_churns, a.active_customers_at_start), 2) AS involuntary_churn_rate,
+  CAST(NULL AS FLOAT64) AS net_churn_rate,
+  cbr.churn_by_reason,
+  cbp.churn_by_plan,
+  cbt.churn_by_tenure_band,
+  ROUND(100 * SAFE_DIVIDE(cc.retention_success_count, cc.retention_attempted_count), 2) AS retention_rate
+FROM
+  months m
+LEFT JOIN
+  active_at_start a ON m.churn_month = a.churn_month
+LEFT JOIN
+  churn_counts cc ON m.churn_month = cc.churn_month
+LEFT JOIN
+  churn_by_reason cbr ON m.churn_month = cbr.churn_month
+LEFT JOIN
+  churn_by_plan cbp ON m.churn_month = cbp.churn_month
+LEFT JOIN
+  churn_by_tenure_band cbt ON m.churn_month = cbt.churn_month

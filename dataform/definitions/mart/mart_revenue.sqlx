@@ -1,0 +1,103 @@
+config {
+  type: "table",
+  schema: "myconnect_mart",
+  description: "Monthly revenue dashboard. Grain: 1 row per month. revenue_by_segment is a specification gap (no segment field or crosswalk is defined anywhere in the spec) and is left NULL rather than fabricated. MRR/ARPU reconstruct point-in-time active subscriptions from dim_subscriptions.start_date/end_date (not is_active, which reflects only today's status)."
+}
+
+WITH months AS (
+  SELECT DISTINCT
+    DATE_TRUNC(date_key, MONTH) AS revenue_month
+  FROM
+    ${ref("dim_date")}
+),
+
+monthly_billing AS (
+  SELECT
+    DATE_TRUNC(invoice_date, MONTH) AS revenue_month,
+    SUM(total_amount) AS total_revenue
+  FROM
+    ${ref("fct_billing")}
+  GROUP BY
+    revenue_month
+),
+
+monthly_active_subscriptions AS (
+  -- Point-in-time MRR: a subscription contributes to month M if its date range covers M.
+  -- Mirrors int_monthly_revenue's existing approach at Silver.
+  SELECT
+    m.revenue_month,
+    COUNT(DISTINCT s.subscription_id) AS active_subscriber_count,
+    SUM(s.monthly_charge) AS mrr
+  FROM
+    months m
+  LEFT JOIN
+    ${ref("dim_subscriptions")} s
+    ON s.start_date <= LAST_DAY(m.revenue_month)
+    AND (s.end_date IS NULL OR s.end_date >= m.revenue_month)
+  GROUP BY
+    m.revenue_month
+),
+
+monthly_payments AS (
+  SELECT
+    DATE_TRUNC(payment_date, MONTH) AS revenue_month,
+    SUM(CASE WHEN is_successful AND NOT is_orphan_payment THEN payment_amount ELSE 0 END) AS successful_payment_total
+  FROM
+    ${ref("fct_payments")}
+  GROUP BY
+    revenue_month
+),
+
+revenue_by_plan_agg AS (
+  SELECT
+    DATE_TRUNC(b.invoice_date, MONTH) AS revenue_month,
+    COALESCE(p.plan_name, 'Unknown') AS plan_name,
+    SUM(b.total_amount) AS plan_revenue
+  FROM
+    ${ref("fct_billing")} b
+  LEFT JOIN
+    ${ref("dim_subscriptions")} s
+    ON b.subscription_id = s.subscription_id
+  LEFT JOIN
+    ${ref("dim_plans")} p
+    ON s.plan_id = p.plan_id
+  GROUP BY
+    revenue_month,
+    plan_name
+),
+
+revenue_by_plan AS (
+  SELECT
+    revenue_month,
+    ARRAY_AGG(STRUCT(plan_name, plan_revenue) ORDER BY plan_revenue DESC) AS revenue_by_plan
+  FROM
+    revenue_by_plan_agg
+  GROUP BY
+    revenue_month
+)
+
+SELECT
+  m.revenue_month,
+  mas.mrr,
+  mb.total_revenue,
+  SAFE_DIVIDE(mas.mrr, mas.active_subscriber_count) AS arpu,
+  rbp.revenue_by_plan,
+  CAST(NULL AS ARRAY<STRUCT<segment STRING, revenue NUMERIC>>) AS revenue_by_segment,
+  ROUND(
+    100 * SAFE_DIVIDE(
+      mb.total_revenue - LAG(mb.total_revenue) OVER (ORDER BY m.revenue_month),
+      LAG(mb.total_revenue) OVER (ORDER BY m.revenue_month)
+    ),
+    2
+  ) AS revenue_growth_pct,
+  ROUND(100 * SAFE_DIVIDE(mp.successful_payment_total, mb.total_revenue), 2) AS collection_rate
+FROM
+  months m
+LEFT JOIN
+  monthly_billing mb ON m.revenue_month = mb.revenue_month
+LEFT JOIN
+  monthly_active_subscriptions mas ON m.revenue_month = mas.revenue_month
+LEFT JOIN
+  monthly_payments mp ON m.revenue_month = mp.revenue_month
+LEFT JOIN
+  revenue_by_plan rbp ON m.revenue_month = rbp.revenue_month

@@ -1,0 +1,40 @@
+config {
+  type: "table",
+  schema: "myconnect_gold",
+  description: "Geography dimension derived from actual customer city/state combinations. Grain: 1 row per city + state. Regions use Malaysian geographic groupings: Central, Northern, East Coast, Southern, and Borneo."
+}
+
+SELECT
+  state,
+  city,
+
+  CASE
+    WHEN state IN ('Selangor', 'Kuala Lumpur', 'Putrajaya')
+      THEN 'Central'
+
+    WHEN state IN ('Perlis', 'Kedah', 'Penang', 'Perak')
+      THEN 'Northern'
+
+    WHEN state IN ('Kelantan', 'Terengganu', 'Pahang')
+      THEN 'East Coast'
+
+    WHEN state IN ('Negeri Sembilan', 'Melaka', 'Johor')
+      THEN 'Southern'
+
+    WHEN state IN ('Sabah', 'Sarawak', 'Labuan')
+      THEN 'Borneo'
+
+    ELSE 'Other'
+  END AS region,
+
+  ROUND(
+    100 * COUNTIF(LOWER(TRIM(dwelling_type)) = 'sdu') / COUNT(*),
+    2
+  ) AS dwelling_mix
+
+FROM
+  ${ref("stg_customers")}
+
+GROUP BY
+  state,
+  city

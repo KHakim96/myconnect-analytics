@@ -1,0 +1,38 @@
+config {
+  type: "view",
+  schema: "myconnect_silver",
+  description: "Customer tenure and lifecycle stage based on first subscription date. Grain: 1 row per customer."
+}
+
+WITH first_subscription AS (
+  SELECT
+    customer_id,
+    MIN(subscription_start_date) AS first_subscription_date,
+    COUNT(*) AS total_subscriptions,
+    COUNTIF(status = 'active') AS active_subscriptions
+  FROM
+    ${ref("stg_subscriptions")}
+  GROUP BY
+    customer_id
+)
+
+SELECT
+  c.customer_id,
+  c.registration_date,
+  c.customer_status,
+  fs.first_subscription_date,
+  fs.total_subscriptions,
+  fs.active_subscriptions,
+  DATE_DIFF(CURRENT_DATE(), fs.first_subscription_date, MONTH) AS tenure_months,
+  DATE_DIFF(CURRENT_DATE(), fs.first_subscription_date, DAY) AS tenure_days,
+  CASE
+    WHEN fs.first_subscription_date IS NULL THEN 'new'
+    WHEN DATE_DIFF(CURRENT_DATE(), fs.first_subscription_date, MONTH) < 6 THEN 'new'
+    WHEN DATE_DIFF(CURRENT_DATE(), fs.first_subscription_date, MONTH) < 24 THEN 'established'
+    ELSE 'loyal'
+  END AS lifecycle_stage
+FROM
+  ${ref("int_customer_subscriptions")} c
+LEFT JOIN
+  first_subscription fs
+  ON c.customer_id = fs.customer_id

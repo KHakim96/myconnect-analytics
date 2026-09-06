@@ -1,0 +1,15 @@
+config {
+  type: "assertion",
+  description: "Every stg_subscriptions.customer_id must exist in stg_customers, the surviving IC-deduplicated Silver customer population. Regression guard for the B3 fix, which previously validated against Bronze customers instead."
+}
+
+SELECT
+  s.subscription_id,
+  s.customer_id
+FROM
+  ${ref("stg_subscriptions")} s
+LEFT JOIN
+  ${ref("stg_customers")} c
+  ON s.customer_id = c.customer_id
+WHERE
+  c.customer_id IS NULL

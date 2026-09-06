@@ -1,0 +1,25 @@
+config {
+  type: "view",
+  schema: "myconnect_silver",
+  description: "Clean promotions catalog with resolved date inversions and parsed eligible plan arrays."
+}
+
+SELECT
+  promo_id,
+  promo_name,
+  promo_type,
+  discount_amount,
+  discount_percentage,
+  promo_duration_months,
+  CASE
+    WHEN end_date IS NOT NULL AND end_date < start_date THEN end_date
+    ELSE start_date
+  END AS start_date,
+  CASE
+    WHEN end_date IS NOT NULL AND end_date < start_date THEN start_date
+    ELSE end_date
+  END AS end_date,
+  SPLIT(eligible_plans, ',') AS eligible_plans,
+  is_active
+FROM
+  ${ref("promotions")}

@@ -1,0 +1,42 @@
+config {
+  type: "table",
+  schema: "myconnect_mart",
+  description: "Revenue assurance analytics. Grain: 1 row per month. Reuses fct_billing.payment_reconciliation_status (sourced verbatim from Silver's int_payment_reconciliation) for overpayments/underpayments, and fct_payments.is_orphan_payment for orphan_payments — no reconciliation logic is reimplemented."
+}
+
+WITH billing_agg AS (
+  SELECT
+    DATE_TRUNC(invoice_date, MONTH) AS assurance_month,
+    COUNTIF(reconciliation_flag) AS billing_mismatch_count,
+    ROUND(SUM(CASE WHEN reconciliation_flag THEN ABS(total_amount - line_item_total) ELSE 0 END), 2) AS billing_mismatch_amount,
+    SUM(total_amount) AS total_billed,
+    COUNTIF(payment_reconciliation_status = 'overpayment') AS overpayments,
+    COUNTIF(payment_reconciliation_status = 'underpayment') AS underpayments
+  FROM
+    ${ref("fct_billing")}
+  GROUP BY
+    assurance_month
+),
+
+payments_agg AS (
+  SELECT
+    DATE_TRUNC(payment_date, MONTH) AS assurance_month,
+    COUNTIF(is_orphan_payment) AS orphan_payments
+  FROM
+    ${ref("fct_payments")}
+  GROUP BY
+    assurance_month
+)
+
+SELECT
+  b.assurance_month,
+  b.billing_mismatch_count,
+  b.billing_mismatch_amount,
+  COALESCE(p.orphan_payments, 0) AS orphan_payments,
+  b.overpayments,
+  b.underpayments,
+  ROUND(100 * SAFE_DIVIDE(b.billing_mismatch_amount, b.total_billed), 2) AS leakage_pct
+FROM
+  billing_agg b
+LEFT JOIN
+  payments_agg p ON b.assurance_month = p.assurance_month

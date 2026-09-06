@@ -1,0 +1,65 @@
+config {
+  type: "view",
+  schema: "myconnect_silver",
+  description: "Clean subscriptions with resolved date inversions, validated MRC against plan pricing, flagged overlapping active subscriptions, and removed orphan customer records."
+}
+
+WITH cleaned_subscriptions AS (
+  SELECT
+    s.subscription_id,
+    s.customer_id,
+    s.plan_id,
+    CASE
+      WHEN s.subscription_end_date IS NOT NULL AND s.subscription_end_date < s.subscription_start_date THEN s.subscription_end_date
+      ELSE s.subscription_start_date
+    END AS subscription_start_date,
+    CASE
+      WHEN s.subscription_end_date IS NOT NULL AND s.subscription_end_date < s.subscription_start_date THEN s.subscription_start_date
+      ELSE s.subscription_end_date
+    END AS subscription_end_date,
+    s.contract_months,
+    LOWER(TRIM(s.status)) AS status,
+    s.monthly_recurring_charge,
+    (s.monthly_recurring_charge = p.monthly_price) AS is_mrc_matching_plan,
+    (s.promo_id IS NOT NULL OR s.monthly_recurring_charge = p.monthly_price) AS is_mrc_valid,
+    s.installation_date,
+    s.installation_fee,
+    s.termination_reason,
+    s.promo_id,
+    TIMESTAMP_MICROS(DIV(s.created_at, 1000)) AS created_at,
+    TIMESTAMP_MICROS(DIV(s.updated_at, 1000)) AS updated_at,
+    (LOWER(TRIM(s.status)) = 'active' AND COUNTIF(LOWER(TRIM(s.status)) = 'active') OVER (PARTITION BY s.customer_id) > 1) AS is_overlapping_active
+  FROM
+    ${ref("subscriptions")} s
+  LEFT JOIN
+    ${ref("plans")} p
+    ON s.plan_id = p.plan_id
+  -- stg_customers (not the Bronze customers declaration) is the surviving, IC-deduplicated
+  -- Silver customer population. Filtering against Bronze customers would let subscriptions
+  -- belonging to customers removed during Silver IC deduplication survive here, breaking the
+  -- intended stg_subscriptions.customer_id -> stg_customers.customer_id foreign-key relationship.
+  WHERE
+    s.customer_id IN (SELECT customer_id FROM ${ref("stg_customers")})
+)
+
+SELECT
+  subscription_id,
+  customer_id,
+  plan_id,
+  subscription_start_date,
+  subscription_end_date,
+  contract_months,
+  status,
+  monthly_recurring_charge,
+  is_mrc_matching_plan,
+  is_mrc_valid,
+  installation_date,
+  installation_fee,
+  termination_reason,
+  promo_id,
+  created_at,
+  updated_at,
+  is_overlapping_active
+FROM
+  cleaned_subscriptions
+

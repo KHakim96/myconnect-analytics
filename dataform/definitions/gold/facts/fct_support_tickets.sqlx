@@ -1,0 +1,31 @@
+config {
+  type: "table",
+  schema: "myconnect_gold",
+  description: "Support ticket facts with resolution metrics. Grain: 1 row per ticket. sla_met stays NULL because the source has no first-response timestamp and the specification defines no SLA threshold."
+}
+
+SELECT
+  t.ticket_id,
+  t.customer_id,
+  t.subscription_id,
+  -- Ticket-level date so Looker/Mart can filter or aggregate by any date range
+  -- (day, month, quarter) without pre-aggregating the fact. Grain remains 1 row per ticket.
+  t.created_date,
+  t.category,
+  t.priority,
+  t.status,
+  t.channel,
+  t.resolution_hours,
+  t.satisfaction_score,
+  -- sla_met preserved as NULL from int_ticket_metrics: no SLA threshold is defined by the
+  -- specification, and there is no first-response timestamp to evaluate one against.
+  t.is_sla_compliant AS sla_met,
+  -- is_repeat_ticket is mechanically derived (this customer has more than one ticket on
+  -- record); no time-window or category-based "repeat issue" rule is defined by the
+  -- specification, so none is invented. NULL when customer_id is NULL (anonymous ticket).
+  CASE
+    WHEN t.customer_id IS NULL THEN NULL
+    ELSE ROW_NUMBER() OVER (PARTITION BY t.customer_id ORDER BY t.created_date) > 1
+  END AS is_repeat_ticket
+FROM
+  ${ref("int_ticket_metrics")} t

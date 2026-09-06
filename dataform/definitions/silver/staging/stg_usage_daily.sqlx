@@ -1,0 +1,56 @@
+config {
+  type: "incremental",
+  schema: "myconnect_silver",
+  uniqueKey: ["subscription_id", "usage_date"],
+  description: "Clean daily usage metrics deduplicated by subscription and usage date, with clamped negative volumes, capped outlier speeds, and incremental late-arriving window handling."
+}
+
+-- Assumed incremental lookback window: 3 days for late-arriving records.
+
+WITH staged_usage AS (
+  SELECT
+    u.usage_id,
+    u.subscription_id,
+    u.usage_date,
+    CASE WHEN u.download_gb < 0 THEN 0.000 ELSE u.download_gb END AS download_gb,
+    CASE WHEN u.upload_gb < 0 THEN 0.000 ELSE u.upload_gb END AS upload_gb,
+    -- Authoritative outlier rule (spec Section 7.7): a speed reading is an outlier when it
+    -- exceeds the subscription's plan speed x 1.5, not a flat Mbps ceiling (a flat cap does
+    -- not represent this per-plan definition). Threshold is derived via
+    -- usage_daily -> stg_subscriptions -> stg_plans.speed_mbps; readings are capped at that
+    -- per-plan threshold when exceeded, and left unchanged when no plan speed is resolvable.
+    CASE WHEN u.peak_download_mbps > p.speed_mbps * 1.5 THEN p.speed_mbps * 1.5 ELSE u.peak_download_mbps END AS peak_download_mbps,
+    CASE WHEN u.avg_download_mbps > p.speed_mbps * 1.5 THEN p.speed_mbps * 1.5 ELSE u.avg_download_mbps END AS avg_download_mbps,
+    u.session_count,
+    TIMESTAMP_MICROS(DIV(u.created_at, 1000)) AS created_at,
+    u.created_at AS raw_created_at,
+    ROW_NUMBER() OVER (
+      PARTITION BY u.subscription_id, u.usage_date
+      ORDER BY u.created_at ASC, u.usage_id ASC
+    ) AS row_num
+  FROM
+    ${ref("usage_daily")} u
+  LEFT JOIN
+    ${ref("stg_subscriptions")} s
+    ON u.subscription_id = s.subscription_id
+  LEFT JOIN
+    ${ref("stg_plans")} p
+    ON s.plan_id = p.plan_id
+  ${when(incremental(), `WHERE TIMESTAMP_MICROS(DIV(u.created_at, 1000)) > (SELECT MAX(created_at) FROM ${self()}) - INTERVAL 3 DAY`)}
+)
+
+SELECT
+  usage_id,
+  subscription_id,
+  usage_date,
+  download_gb,
+  upload_gb,
+  peak_download_mbps,
+  avg_download_mbps,
+  session_count,
+  created_at
+FROM
+  staged_usage
+WHERE
+  row_num = 1
+

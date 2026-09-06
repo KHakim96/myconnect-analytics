@@ -1,0 +1,32 @@
+config {
+  type: "view",
+  schema: "myconnect_silver",
+  description: "Support ticket with resolution metrics and SLA compliance. Grain: 1 row per ticket. First-response time cannot be calculated because no first-response timestamp exists in the source."
+}
+
+SELECT
+  ticket_id,
+  customer_id,
+  subscription_id,
+  created_date,
+  resolved_date,
+  category,
+  subcategory,
+  priority,
+  status,
+  channel,
+  assigned_agent,
+  satisfaction_score,
+
+  CASE
+    WHEN resolved_date IS NOT NULL
+    THEN TIMESTAMP_DIFF(resolved_date, created_date, HOUR)
+    ELSE NULL
+  END AS resolution_hours,
+
+  CAST(NULL AS INT64) AS first_response_time,
+
+  CAST(NULL AS BOOL) AS is_sla_compliant
+
+FROM
+  ${ref("stg_support_tickets")}

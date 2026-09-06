@@ -1,0 +1,52 @@
+config {
+  type: "view",
+  schema: "myconnect_silver",
+  description: "Clean network events with standardized canonical regions and resolved timestamp inversions."
+}
+
+WITH converted_events AS (
+  SELECT
+    event_id,
+    node_id,
+    event_type,
+    severity,
+    TIMESTAMP_MICROS(DIV(start_time, 1000)) AS start_time,
+    TIMESTAMP_MICROS(DIV(end_time, 1000)) AS end_time,
+    affected_subscribers,
+    CASE
+      WHEN UPPER(REPLACE(TRIM(region), ' ', '')) = 'KLANGVALLEY' THEN 'Klang Valley'
+      WHEN UPPER(TRIM(region)) IN ('NORTH', 'NORTHERN') THEN 'Northern'
+      WHEN UPPER(TRIM(region)) IN ('SOUTH', 'SOUTHERN') THEN 'Southern'
+      WHEN UPPER(TRIM(region)) = 'EAST COAST' THEN 'East Coast'
+      WHEN UPPER(TRIM(region)) = 'SABAH' THEN 'Sabah'
+      WHEN UPPER(TRIM(region)) = 'SARAWAK' THEN 'Sarawak'
+      ELSE TRIM(region)
+    END AS region,
+    state,
+    root_cause,
+    TIMESTAMP_MICROS(DIV(created_at, 1000)) AS created_at
+  FROM
+    ${ref("network_events")}
+)
+
+SELECT
+  event_id,
+  node_id,
+  event_type,
+  severity,
+  CASE
+    WHEN end_time IS NOT NULL AND end_time < start_time THEN end_time
+    ELSE start_time
+  END AS start_time,
+  CASE
+    WHEN end_time IS NOT NULL AND end_time < start_time THEN start_time
+    ELSE end_time
+  END AS end_time,
+  affected_subscribers,
+  region,
+  state,
+  root_cause,
+  created_at
+FROM
+  converted_events
+

@@ -1,0 +1,16 @@
+config {
+  type: "assertion",
+  description: "stg_usage_daily download_gb and upload_gb must never be negative after staging clamps negative sensor readings to zero."
+}
+
+SELECT
+  usage_id,
+  subscription_id,
+  usage_date,
+  download_gb,
+  upload_gb
+FROM
+  ${ref("stg_usage_daily")}
+WHERE
+  download_gb < 0
+  OR upload_gb < 0

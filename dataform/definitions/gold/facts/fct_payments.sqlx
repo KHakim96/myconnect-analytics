@@ -1,0 +1,32 @@
+config {
+  type: "incremental",
+  schema: "myconnect_gold",
+  uniqueKey: ["payment_id"],
+  description: "Payment facts with success flag and days-after-due-date. Grain: 1 row per payment."
+}
+
+SELECT
+  p.payment_id,
+  p.invoice_id,
+  p.customer_id,
+  -- Payment-level date so Looker/Mart can filter or aggregate by any date range
+  -- (day, month, quarter) without pre-aggregating the fact. Grain remains 1 row per payment.
+  p.payment_date,
+  p.payment_amount,
+  p.payment_method,
+  -- is_successful reflects only the Silver-normalized payment_status value ('success');
+  -- failed/reversed/pending payments are never treated as successful.
+  (p.payment_status = 'success') AS is_successful,
+  -- Reuses stg_payments' existing orphan classification (payment references an invoice_id
+  -- with no matching stg_billing row); no new orphan logic is introduced here.
+  p.is_orphan_payment,
+  -- Orphan payments (no matching invoice) naturally yield NULL due_date and therefore NULL
+  -- days_after_due_date, which is truthful rather than fabricated.
+  DATE_DIFF(p.payment_date, b.due_date, DAY) AS days_after_due_date,
+  p.created_at
+FROM
+  ${ref("stg_payments")} p
+LEFT JOIN
+  ${ref("stg_billing")} b
+  ON p.invoice_id = b.invoice_id
+${when(incremental(), `WHERE p.created_at > (SELECT MAX(created_at) FROM ${self()})`)}

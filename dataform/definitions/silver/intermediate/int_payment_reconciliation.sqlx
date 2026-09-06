@@ -1,0 +1,57 @@
+config {
+  type: "view",
+  schema: "myconnect_silver",
+  description: "Invoice with aggregated successful payment totals and payment reconciliation status. Grain: 1 row per invoice."
+}
+
+WITH payment_totals AS (
+  SELECT
+    invoice_id,
+    SUM(
+      CASE
+        WHEN NOT is_orphan_payment
+          AND payment_status = 'success'
+        THEN payment_amount
+        ELSE 0
+      END
+    ) AS total_paid,
+    COUNTIF(
+      NOT is_orphan_payment
+      AND payment_status = 'success'
+    ) AS successful_payment_count,
+    COUNTIF(is_orphan_payment) AS orphan_payment_count
+  FROM
+    ${ref("stg_payments")}
+  GROUP BY
+    invoice_id
+)
+
+SELECT
+  b.invoice_id,
+  b.subscription_id,
+  b.customer_id,
+  b.billing_period_start,
+  b.billing_period_end,
+  b.invoice_date,
+  b.due_date,
+  b.total_amount,
+  b.status AS invoice_status,
+  COALESCE(pt.total_paid, 0) AS total_paid,
+  COALESCE(pt.successful_payment_count, 0) AS successful_payment_count,
+  COALESCE(pt.orphan_payment_count, 0) AS orphan_payment_count,
+  (
+    b.total_amount - COALESCE(pt.total_paid, 0)
+  ) AS payment_balance,
+  CASE
+    WHEN COALESCE(pt.total_paid, 0) = 0 THEN 'unpaid'
+    WHEN ABS(
+      b.total_amount - COALESCE(pt.total_paid, 0)
+    ) <= 0.01 THEN 'full_payment'
+    WHEN COALESCE(pt.total_paid, 0) < b.total_amount THEN 'underpayment'
+    WHEN COALESCE(pt.total_paid, 0) > b.total_amount THEN 'overpayment'
+  END AS payment_reconciliation_status
+FROM
+  ${ref("stg_billing")} b
+LEFT JOIN
+  payment_totals pt
+  ON b.invoice_id = pt.invoice_id

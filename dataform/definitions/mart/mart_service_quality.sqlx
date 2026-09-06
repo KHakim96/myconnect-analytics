@@ -1,0 +1,87 @@
+config {
+  type: "table",
+  schema: "myconnect_mart",
+  description: "Service quality analytics. Grain: 1 row per month + region. `region` here is fct_network_events' own network-infrastructure region taxonomy (Klang Valley/Northern/Southern/East Coast/Sabah/Sarawak), which is a different scheme from dim_geography's customer-derived region taxonomy (Central/Northern/East Coast/Southern/Borneo/Other) and is not cross-mapped to it, since no such mapping is defined anywhere and the two represent different real-world concepts (network location vs. customer home state)."
+}
+
+WITH region_spine AS (
+  SELECT DISTINCT region FROM ${ref("fct_network_events")}
+),
+
+month_region_spine AS (
+  SELECT
+    m.event_month,
+    r.region
+  FROM
+    (SELECT DISTINCT DATE_TRUNC(date_key, MONTH) AS event_month FROM ${ref("dim_date")}) m
+  CROSS JOIN
+    region_spine r
+),
+
+events AS (
+  SELECT
+    DATE_TRUNC(DATE(start_time), MONTH) AS event_month,
+    region,
+    event_type,
+    severity,
+    duration_minutes,
+    affected_subscriber_hours
+  FROM
+    ${ref("fct_network_events")}
+),
+
+monthly_agg AS (
+  SELECT
+    event_month,
+    region,
+    COUNTIF(event_type = 'outage') AS outage_count,
+    ROUND(AVG(duration_minutes) / 60.0, 2) AS avg_duration_hours,
+    ROUND(SUM(affected_subscriber_hours), 2) AS affected_subscriber_hours,
+    ROUND(AVG(duration_minutes), 2) AS mean_time_to_restore
+  FROM
+    events
+  GROUP BY
+    event_month,
+    region
+),
+
+severity_counts AS (
+  SELECT
+    event_month,
+    region,
+    severity,
+    COUNT(*) AS incident_count
+  FROM
+    events
+  GROUP BY
+    event_month,
+    region,
+    severity
+),
+
+severity_breakdown AS (
+  SELECT
+    event_month,
+    region,
+    ARRAY_AGG(STRUCT(severity, incident_count) ORDER BY severity) AS incidents_by_severity
+  FROM
+    severity_counts
+  GROUP BY
+    event_month,
+    region
+)
+
+SELECT
+  s.event_month,
+  s.region,
+  COALESCE(a.outage_count, 0) AS outage_count,
+  a.avg_duration_hours,
+  a.affected_subscriber_hours,
+  sb.incidents_by_severity,
+  a.mean_time_to_restore
+FROM
+  month_region_spine s
+LEFT JOIN
+  monthly_agg a ON s.event_month = a.event_month AND s.region = a.region
+LEFT JOIN
+  severity_breakdown sb ON s.event_month = sb.event_month AND s.region = sb.region

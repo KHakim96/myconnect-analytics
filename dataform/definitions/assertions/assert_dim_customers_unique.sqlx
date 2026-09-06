@@ -1,0 +1,13 @@
+config {
+  type: "assertion",
+  description: "dim_customers must have exactly one row per customer_id (declared grain: 1 row per customer)."
+}
+
+SELECT
+  customer_id
+FROM
+  ${ref("dim_customers")}
+GROUP BY
+  customer_id
+HAVING
+  COUNT(*) > 1
