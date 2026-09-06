@@ -1,0 +1,4 @@
+defaultProject: myconnect-analytics
+defaultDataset: dataform
+defaultAssertionDataset: dataform_assertions
+dataformCoreVersion: 3.0.52
